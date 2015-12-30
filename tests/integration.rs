@@ -10,17 +10,22 @@ use websocket::client::request::Url;
 #[test]
 fn test_initial_send() {
     let mut server = Server::new();
+    println!("Created server.");
     let sender = server.start();
-    let url = Url::parse(&format!("ws://0.0.0.0:{}", server.websocket_addr().unwrap().port())).unwrap();
+    println!("Created sender.");
+    let url = Url::parse(&format!("ws://localhost:{}", server.websocket_addr().unwrap().port())).unwrap();
 
     let request = Client::connect(&url).unwrap();
     let response = request.send().unwrap();
     response.validate().unwrap();
+    println!("Validated sender.");
     let (_, mut receiver) = response.begin().split();
 
     sender.send("Hello world!".to_owned()).unwrap();
+    println!("Sent message.");
 
     let message: Message = receiver.recv_message().unwrap();
+    println!("Received message.");
     assert_eq!(String::from_utf8(message.payload.into_owned()).unwrap(), "<p>Hello world!</p>\n");
 }
 
@@ -28,7 +33,7 @@ fn test_initial_send() {
 fn test_multiple_send() {
     let mut server = Server::new();
     let sender = server.start();
-    let url = Url::parse(&format!("ws://0.0.0.0:{}", server.websocket_addr().unwrap().port())).unwrap();
+    let url = Url::parse(&format!("ws://localhost:{}", server.websocket_addr().unwrap().port())).unwrap();
 
     let request = Client::connect(&url).unwrap();
     let response = request.send().unwrap();

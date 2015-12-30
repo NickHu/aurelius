@@ -58,18 +58,18 @@ use websocket::Server as WebSocketServer;
 /// The `Server` type constructs a new markdown preview server.
 ///
 /// The server will listen for HTTP and WebSocket connections on arbitrary ports.
-pub struct Server<'a> {
+pub struct Server {
     http_server: Arc<RwLock<HttpServer>>,
-    websocket_server: WebSocketServer<'a>,
+    websocket_server: WebSocketServer,
     initial_markdown: Option<String>,
     highlight_theme: Option<String>,
 }
 
-impl<'a> Server<'a> {
+impl Server {
     /// Creates a new markdown preview server.
     ///
     /// Builder methods are provided to configure the server before starting it.
-    pub fn new() -> Server<'a> {
+    pub fn new() -> Server {
         let http_port = porthole::open().unwrap();
         let http_server = HttpServer::new(http_port);
 
@@ -87,44 +87,27 @@ impl<'a> Server<'a> {
 
     /// Starts the server, returning a `ServerHandle` to communicate with it.
     pub fn start(&mut self) -> Sender<String> {
-        let websocket_server = &mut self.websocket_server;
+        let (markdown_sender, markdown_receiver) = mpsc::channel::<String>();
+        let websocket_sender = self.websocket_server.start();
 
-        let (tx, rx) = mpsc::channel::<String>();
-
-        // Start websocket server
-        let markdown_receiver = Mutex::new(rx);
-
-        crossbeam::scope(|scope| {
-            scope.spawn(|| {
-                let websocket_sender = websocket_server.start();
-
-                for markdown in markdown_receiver.lock().unwrap().iter() {
-                    let html: String = markdown::to_html(&markdown);
-                    websocket_sender.send(html).unwrap();
-                }
-            });
+        thread::spawn(move || {
+            for markdown in markdown_receiver.iter() {
+                let html: String = markdown::to_html(&markdown);
+                println!("SENDING MARKDOWN: {}", html);
+                websocket_sender.send(html).unwrap();
+            }
         });
 
         let http_server = self.http_server.clone();
 
-        let websocket_port = websocket_server.local_addr().unwrap().port();
-
-        // Start http server
-        let initial_markdown = match self.initial_markdown {
-            Some(ref markdown) => markdown.clone(),
-            None => "".to_string(),
-        };
-        let highlight_theme = match self.highlight_theme {
-            Some(ref theme) => theme.clone(),
-            None => "github".to_string(),
-        };
+        let websocket_port = self.websocket_server.local_addr().unwrap().port();
 
         thread::spawn(move || {
             let server = http_server.read().unwrap();
             debug!("Starting http_server");
-            server.start(websocket_port, initial_markdown, highlight_theme);
+            server.start(websocket_port, "".to_owned(), "github".to_owned());
         });
 
-        tx
+        markdown_sender
     }
 }
