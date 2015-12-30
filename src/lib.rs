@@ -27,6 +27,7 @@
 //!
 //! [vim-markdown-composer]: https://github.com/euclio/vim-markdown-composer
 
+extern crate crossbeam;
 extern crate hoedown;
 extern crate porthole;
 extern crate url;
@@ -44,100 +45,69 @@ pub mod markdown;
 mod http;
 mod websocket;
 
+use std::net::SocketAddr;
+use std::io;
+use std::sync::{Arc, Mutex, RwLock};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+
 use http::Server as HttpServer;
 use websocket::Server as WebSocketServer;
 
-use std::sync::{Arc, RwLock};
-use std::thread;
-
-/// Representation of the running markdown server.
-pub struct ServerHandle {
-    server: Server,
-}
-
-impl ServerHandle {
-    /// Returns the port that the WebSocket server is listening on.
-    pub fn websocket_port(&self) -> u16 {
-        let ws_server_lock = self.server.websocket_server.clone();
-        let ws_server = ws_server_lock.read().unwrap();
-        ws_server.port
-    }
-
-    /// Returns the port that the HTTP server is listening on.
-    pub fn http_port(&self) -> u16 {
-        let http_server_lock = self.server.http_server.clone();
-        let http_server = http_server_lock.read().unwrap();
-        http_server.port
-    }
-
-    /// Send a markdown string to be rendered by the server.
-    ///
-    /// The HTML will then be sent to all websocket connections.
-    pub fn send_markdown(&self, markdown: &str) {
-        let ws_server_lock = self.server.websocket_server.clone();
-        let ws_server = ws_server_lock.read().unwrap();
-        ws_server.notify(markdown::to_html(markdown));
-    }
-}
 
 /// The `Server` type constructs a new markdown preview server.
 ///
 /// The server will listen for HTTP and WebSocket connections on arbitrary ports.
-pub struct Server {
-    websocket_port: u16,
+pub struct Server<'a> {
     http_server: Arc<RwLock<HttpServer>>,
-    websocket_server: Arc<RwLock<WebSocketServer>>,
+    websocket_server: WebSocketServer<'a>,
     initial_markdown: Option<String>,
     highlight_theme: Option<String>,
 }
 
-impl Server {
+impl<'a> Server<'a> {
     /// Creates a new markdown preview server.
     ///
     /// Builder methods are provided to configure the server before starting it.
-    pub fn new() -> Server {
-        let websocket_port = porthole::open().unwrap();
-        let websocket_server = WebSocketServer::new(websocket_port);
-
+    pub fn new() -> Server<'a> {
         let http_port = porthole::open().unwrap();
         let http_server = HttpServer::new(http_port);
 
         Server {
-            websocket_port: websocket_port,
             http_server: Arc::new(RwLock::new(http_server)),
-            websocket_server: Arc::new(RwLock::new(websocket_server)),
+            websocket_server: WebSocketServer::new(("localhost", 0)),
             initial_markdown: None,
             highlight_theme: None,
         }
     }
 
-    /// Sets the markdown that the server should display when the first connection is received.
-    pub fn initial_markdown(&mut self, markdown: &str) -> &mut Server {
-        self.initial_markdown = Some(markdown.to_string());
-        self
-    }
-
-    /// Sets the theme that should be used for syntax highlighting.
-    ///
-    /// Syntax highlighting is provided by [highlight.js](https://highlightjs.org/). All themes
-    /// supported by highlight.js are supported.
-    pub fn highlight_theme(&mut self, theme: &str) -> &mut Server {
-        self.highlight_theme = Some(theme.to_string());
-        self
+    pub fn websocket_addr(&self) -> io::Result<SocketAddr> {
+        self.websocket_server.local_addr()
     }
 
     /// Starts the server, returning a `ServerHandle` to communicate with it.
-    pub fn start(self) -> ServerHandle {
-        let websocket_server = self.websocket_server.clone();
+    pub fn start(&mut self) -> Sender<String> {
+        let websocket_server = &mut self.websocket_server;
+
+        let (tx, rx) = mpsc::channel::<String>();
 
         // Start websocket server
-        thread::spawn(move || {
-            let server = websocket_server.read().unwrap();
-            server.start();
+        let markdown_receiver = Mutex::new(rx);
+
+        crossbeam::scope(|scope| {
+            scope.spawn(|| {
+                let websocket_sender = websocket_server.start();
+
+                for markdown in markdown_receiver.lock().unwrap().iter() {
+                    let html: String = markdown::to_html(&markdown);
+                    websocket_sender.send(html).unwrap();
+                }
+            });
         });
 
         let http_server = self.http_server.clone();
-        let websocket_port = self.websocket_port;
+
+        let websocket_port = websocket_server.local_addr().unwrap().port();
 
         // Start http server
         let initial_markdown = match self.initial_markdown {
@@ -148,12 +118,13 @@ impl Server {
             Some(ref theme) => theme.clone(),
             None => "github".to_string(),
         };
+
         thread::spawn(move || {
             let server = http_server.read().unwrap();
             debug!("Starting http_server");
             server.start(websocket_port, initial_markdown, highlight_theme);
         });
 
-        ServerHandle { server: self }
+        tx
     }
 }
