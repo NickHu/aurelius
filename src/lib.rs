@@ -47,13 +47,12 @@ mod websocket;
 
 use std::net::SocketAddr;
 use std::io;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use http::Server as HttpServer;
 use websocket::Server as WebSocketServer;
-
 
 /// The `Server` type constructs a new markdown preview server.
 ///
@@ -61,23 +60,29 @@ use websocket::Server as WebSocketServer;
 pub struct Server {
     http_server: Arc<RwLock<HttpServer>>,
     websocket_server: WebSocketServer,
-    initial_markdown: Option<String>,
-    highlight_theme: Option<String>,
+    config: Config,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct Config {
+    pub initial_markdown: String,
+    pub highlight_theme: String,
 }
 
 impl Server {
     /// Creates a new markdown preview server.
-    ///
-    /// Builder methods are provided to configure the server before starting it.
     pub fn new() -> Server {
+        Self::new_with_config(Config { .. Default::default() })
+    }
+
+    pub fn new_with_config(config: Config) -> Server {
         let http_port = porthole::open().unwrap();
         let http_server = HttpServer::new(http_port);
 
         Server {
             http_server: Arc::new(RwLock::new(http_server)),
             websocket_server: WebSocketServer::new(("localhost", 0)),
-            initial_markdown: None,
-            highlight_theme: None,
+            config: config,
         }
     }
 
@@ -102,10 +107,11 @@ impl Server {
 
         let websocket_port = self.websocket_server.local_addr().unwrap().port();
 
+        let config = self.config.clone();
         thread::spawn(move || {
             let server = http_server.read().unwrap();
             debug!("Starting http_server");
-            server.start(websocket_port, "".to_owned(), "github".to_owned());
+            server.start(websocket_port, config.initial_markdown, config.highlight_theme);
         });
 
         markdown_sender

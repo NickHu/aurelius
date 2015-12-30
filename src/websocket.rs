@@ -9,15 +9,10 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 
 use uuid::Uuid;
-use websockets::server::Request;
-use websockets::server::Connection;
-use websockets::WebSocketStream;
-use websockets::Server as WebSocketServer;
-use websockets::{Message, Sender, Receiver};
+use websockets::{Message, Sender, Receiver, WebSocketStream};
 use websockets::header::WebSocketProtocol;
 use websockets::message::Type;
-
-use crossbeam;
+use websockets::server::Request;
 
 /// The WebSocket server.
 ///
