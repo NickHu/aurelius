@@ -27,11 +27,10 @@
 //!
 //! [vim-markdown-composer]: https://github.com/euclio/vim-markdown-composer
 
-extern crate crossbeam;
+extern crate chan;
 extern crate hoedown;
 extern crate porthole;
 extern crate url;
-extern crate uuid;
 extern crate websocket as websockets;
 
 #[macro_use]
@@ -72,7 +71,7 @@ pub struct Config {
 impl Server {
     /// Creates a new markdown preview server.
     pub fn new() -> Server {
-        Self::new_with_config(Config { .. Default::default() })
+        Self::new_with_config(Config { ..Default::default() })
     }
 
     pub fn new_with_config(config: Config) -> Server {
@@ -100,7 +99,7 @@ impl Server {
             for markdown in markdown_receiver.iter() {
                 let html: String = markdown::to_html(&markdown);
                 println!("SENDING MARKDOWN: {}", html);
-                websocket_sender.send(html).unwrap();
+                websocket_sender.send(html);
             }
         });
 
@@ -112,7 +111,9 @@ impl Server {
         thread::spawn(move || {
             let server = http_server.read().unwrap();
             debug!("Starting http_server");
-            server.start(websocket_port, config.initial_markdown, config.highlight_theme);
+            server.start(websocket_port,
+                         config.initial_markdown,
+                         config.highlight_theme);
         });
 
         markdown_sender
