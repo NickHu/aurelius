@@ -94,6 +94,7 @@ impl Server {
     pub fn start(&mut self) -> Sender<String> {
         let (markdown_sender, markdown_receiver) = mpsc::channel::<String>();
         let websocket_sender = self.websocket_server.start();
+        println!("websockets listening on {}", self.websocket_addr().unwrap());
 
         thread::spawn(move || {
             for markdown in markdown_receiver.iter() {
